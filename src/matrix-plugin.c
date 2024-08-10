@@ -199,6 +199,17 @@ matrix_plugin_context_init(RtcomAccountPlugin *plugin,
                         "required", TRUE,
                         NULL));
 
+    rtcom_edit_append_widget(
+          RTCOM_EDIT(page),
+          g_object_new(GTK_TYPE_LABEL,
+                       "label", _("accounts_fi_device_name"),
+                       "xalign", 0.0,
+                       NULL),
+          g_object_new (RTCOM_TYPE_PARAM_STRING,
+                        "field", "device",
+                        "can-next", FALSE,
+                        "required", TRUE,
+                        NULL));
 
     rtcom_edit_connect_on_advanced(
           RTCOM_EDIT(page), G_CALLBACK(matrix_plugin_on_advanced_cb),
