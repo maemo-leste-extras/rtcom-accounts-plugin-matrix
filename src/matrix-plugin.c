@@ -30,6 +30,7 @@
 #include <librtcom-accounts-widgets/rtcom-login.h>
 #include <librtcom-accounts-widgets/rtcom-param-string.h>
 
+#define USE_SERVER_NAME 1
 typedef struct _MatrixPluginClass MatrixPluginClass;
 typedef struct _MatrixPlugin MatrixPlugin;
 
@@ -43,8 +44,20 @@ struct _MatrixPluginClass
   RtcomAccountPluginClass parent_class;
 };
 
-ACCOUNT_DEFINE_PLUGIN(MatrixPlugin, matrix_plugin,
-                      RTCOM_TYPE_ACCOUNT_PLUGIN);
+struct _MatrixPluginPrivate
+{
+  GList *accounts;
+};
+
+typedef struct _MatrixPluginPrivate MatrixPluginPrivate;
+
+#define PRIVATE(plugin) \
+  (MatrixPluginPrivate *)matrix_plugin_get_instance_private(\
+  (MatrixPlugin *)(plugin))
+
+ACCOUNT_DEFINE_PLUGIN_WITH_PRIVATE(MatrixPlugin,
+                                   matrix_plugin,
+                                   RTCOM_TYPE_ACCOUNT_PLUGIN);
 
 static void
 matrix_plugin_init(MatrixPlugin *self)
@@ -53,120 +66,52 @@ matrix_plugin_init(MatrixPlugin *self)
 
   RTCOM_ACCOUNT_PLUGIN(self)->name = "matrix";
   RTCOM_ACCOUNT_PLUGIN(self)->capabilities =
-      RTCOM_PLUGIN_CAPABILITY_ALL & ~RTCOM_PLUGIN_CAPABILITY_FORGOT_PWD & ~RTCOM_PLUGIN_CAPABILITY_REGISTER;
+      RTCOM_PLUGIN_CAPABILITY_ALLOW_MULTIPLE |
+      RTCOM_PLUGIN_CAPABILITY_PASSWORD;
   service = rtcom_account_plugin_add_service(RTCOM_ACCOUNT_PLUGIN(self),
                                              "tank/matrix");
+#if USE_SERVER_NAME
+  rtcom_account_service_set_account_domains(service, "");
+#else
   (void)service;
-
-  glade_init();
+#endif
 }
 
-static void
-on_advanced_settings_response(GtkWidget *dialog, gint response,
-                              RtcomDialogContext *context)
+struct _matrix_account
 {
-  if (response == GTK_RESPONSE_OK)
-  {
-    GError *error = NULL;
-    GladeXML *xml = glade_get_widget_tree(dialog);
-    GtkWidget *page = glade_xml_get_widget(xml, "page");
+  AccountItem *item;
+  RtcomDialogContext *context;
+};
 
-    if (rtcom_page_validate(RTCOM_PAGE(page), &error))
-      gtk_widget_hide(dialog);
-    else
-    {
-      g_warning("advanced page validation failed");
+typedef struct _matrix_account matrix_account;
 
-      if (error)
-      {
-        g_warning("%s: error \"%s\"", G_STRFUNC, error->message);
-        hildon_banner_show_information(dialog, NULL, error->message);
-        g_error_free(error);
-      }
-    }
-  }
-  else
-    gtk_widget_hide(dialog);
-}
-
-static GtkWidget *
-create_advanced_settings_page(RtcomDialogContext *context)
+static gboolean
+on_store_settings(RtcomAccountItem *item, GError **error, matrix_account *ma)
 {
-  GtkWidget *dialog;
+  const GValue *account = g_hash_table_lookup(item->new_params, "account");
 
-  dialog = g_object_get_data(G_OBJECT(context), "page_advanced");
-
-  if (!dialog)
+  if (account)
   {
-    AccountItem *account;
-    GtkWidget *page;
-    AccountService *service;
-    const gchar *profile_name;
-    GtkWidget *start_page;
-    gchar title[200];
-    const gchar *msg;
-    GladeXML *xml = glade_xml_new(PLUGIN_XML_DIR "/matrix-advanced.glade",
-                                  NULL, GETTEXT_PACKAGE);
+    gchar **arr = g_strsplit(g_value_get_string(account), ":", 2);
 
-    rtcom_dialog_context_take_obj(context, G_OBJECT(xml));
-    dialog = glade_xml_get_widget(xml, "advanced");
+    if (arr[0])
+      rtcom_account_item_store_param_string(item, "user", arr[0]);
 
-    if (!dialog)
-    {
-      g_warning("Unable to load Advanced settings dialog");
-      return dialog;
-    }
+    if (arr[1])
+      rtcom_account_item_store_param_string(item, "server", arr[1]);
 
-    gtk_dialog_add_buttons(GTK_DIALOG(dialog),
-                           dgettext("hildon-libs", "wdgt_bd_done"),
-                           GTK_RESPONSE_OK, NULL);
-    account = account_edit_context_get_account(ACCOUNT_EDIT_CONTEXT(context));
-    page = glade_xml_get_widget(xml, "page");
-    rtcom_page_set_account(RTCOM_PAGE(page), RTCOM_ACCOUNT_ITEM(account));
-    service = account_item_get_service(account);
-    profile_name = account_service_get_display_name(service);
-    msg = g_dgettext(GETTEXT_PACKAGE, "accountwizard_ti_advanced_settings");
-    g_snprintf(title, sizeof(title), msg, profile_name);
-    gtk_window_set_title(GTK_WINDOW(dialog), title);
-    start_page = rtcom_dialog_context_get_start_page(context);
-
-    if (start_page)
-    {
-      GtkWidget *toplevel = gtk_widget_get_toplevel(start_page);
-
-      if (toplevel)
-      {
-        gtk_window_set_transient_for(GTK_WINDOW(dialog), GTK_WINDOW(toplevel));
-        gtk_window_set_destroy_with_parent(GTK_WINDOW(dialog), TRUE);
-      }
-    }
-
-    g_object_ref(dialog);
-    g_object_set_data_full(
-          G_OBJECT(context), "page_advanced", dialog, g_object_unref);
+    g_strfreev(arr);
   }
 
-  g_signal_connect(dialog, "response",
-                   G_CALLBACK(on_advanced_settings_response), context);
-  g_signal_connect(dialog, "delete-event", G_CALLBACK(gtk_true), NULL);
-
-  return dialog;
-}
-
-static void
-matrix_plugin_on_advanced_cb(gpointer data)
-{
-  GtkWidget *dialog;
-  RtcomDialogContext *context = RTCOM_DIALOG_CONTEXT(data);
-
-  dialog = create_advanced_settings_page(context);
-  gtk_widget_show(dialog);
+  return TRUE;
 }
 
 static void
 matrix_plugin_context_init(RtcomAccountPlugin *plugin,
-                             RtcomDialogContext *context)
+                           RtcomDialogContext *context)
 {
+  MatrixPluginPrivate *priv = PRIVATE(plugin);
+  matrix_account *ma = g_slice_new(matrix_account);
   gboolean editing;
   AccountItem *account;
   GtkWidget *page;
@@ -174,13 +119,23 @@ matrix_plugin_context_init(RtcomAccountPlugin *plugin,
 
   editing = account_edit_context_get_editing(ACCOUNT_EDIT_CONTEXT(context));
   account = account_edit_context_get_account(ACCOUNT_EDIT_CONTEXT(context));
-  create_advanced_settings_page(context);
+
+  ma->item = account;
+  ma->context = context;
+  priv->accounts = g_list_prepend(priv->accounts, ma);
+
+  g_object_add_weak_pointer(G_OBJECT(ma->context), (gpointer *)&ma->context);
+
+  g_signal_connect_after(account, "store-settings",
+                         G_CALLBACK(on_store_settings), ma);
 
   if (editing)
   {
     page =
       g_object_new(
         RTCOM_TYPE_EDIT,
+        "user-server-separator" , ":",
+        "username-must-have-at-separator", TRUE,
         "username-field", "account",
         "username-invalid-chars-re", invalid_chars_re,
         "items-mask", RTCOM_ACCOUNT_PLUGIN(plugin)->capabilities,
@@ -188,73 +143,76 @@ matrix_plugin_context_init(RtcomAccountPlugin *plugin,
         NULL);
 
     rtcom_edit_append_widget(
-          RTCOM_EDIT(page),
-          g_object_new(GTK_TYPE_LABEL,
-                       "label", _("accounts_fi_server"),
-                       "xalign", 0.0,
-                       NULL),
-          g_object_new (RTCOM_TYPE_PARAM_STRING,
-                        "field", "server",
-                        "can-next", FALSE,
-                        "required", TRUE,
-                        NULL));
-
-    rtcom_edit_append_widget(
-          RTCOM_EDIT(page),
-          g_object_new(GTK_TYPE_LABEL,
-                       "label", _("accounts_fi_device_name"),
-                       "xalign", 0.0,
-                       NULL),
-          g_object_new (RTCOM_TYPE_PARAM_STRING,
-                        "field", "device",
-                        "can-next", FALSE,
-                        "required", TRUE,
-                        NULL));
-
-    rtcom_edit_connect_on_advanced(
-          RTCOM_EDIT(page), G_CALLBACK(matrix_plugin_on_advanced_cb),
-          context);
+      RTCOM_EDIT(page),
+        g_object_new(GTK_TYPE_LABEL,
+                     "label", _("accounts_fi_device_name"),
+                     "xalign", 0.0,
+                     NULL),
+        g_object_new (RTCOM_TYPE_PARAM_STRING,
+                      "field", "device",
+                      "required", TRUE,
+                      NULL));
   }
   else
   {
-    gchar *username_label = g_strconcat(_("accounts_fi_matrix_user_and_host"),
-                                        NULL);
-
     page =
       g_object_new(
         RTCOM_TYPE_LOGIN,
+        "user-server-separator" , ":",
+        "username-placeholder", "@username:homeserver.tld",
+        "username-must-have-at-separator", TRUE,
         "username-field", "account",
-        "username-label", username_label,
         "username-invalid-chars-re", invalid_chars_re,
         "items-mask", RTCOM_ACCOUNT_PLUGIN(plugin)->capabilities,
         "account", account,
         NULL);
 
     rtcom_login_append_widget(
-          RTCOM_LOGIN(page),
-          g_object_new(GTK_TYPE_LABEL,
-                       "label", _("accounts_fi_server"),
-                       "xalign", 0.0,
-                       NULL),
-          g_object_new (RTCOM_TYPE_PARAM_STRING,
-                        "field", "server",
-                        "can-next", FALSE,
-                        "required", TRUE,
-                        NULL));
-
-
-    g_free(username_label);
-    rtcom_login_connect_on_advanced(
-          RTCOM_LOGIN(page), G_CALLBACK(matrix_plugin_on_advanced_cb),
-          context);
+      RTCOM_LOGIN(page),
+        g_object_new(GTK_TYPE_LABEL,
+                     "label", _("accounts_fi_device_name"),
+                     "xalign", 0.0,
+                     NULL),
+        g_object_new (RTCOM_TYPE_PARAM_STRING,
+                      "text", "Maemo",
+                      "field", "device",
+                      "required", TRUE,
+                      NULL));
   }
 
   rtcom_dialog_context_set_start_page(context, page);
 }
 
 static void
+matrix_account_destroy(gpointer data)
+{
+  matrix_account *ma = data;
+
+  if (ma->context)
+  {
+    g_signal_handlers_disconnect_matched(
+      ma->item,
+      G_SIGNAL_MATCH_DATA | G_SIGNAL_MATCH_FUNC,
+      0, 0, NULL, on_store_settings, ma);
+  }
+
+  g_slice_free(matrix_account, ma);
+}
+
+static void
+matrix_plugin_finalize(GObject *object)
+{
+  MatrixPluginPrivate *priv = PRIVATE(object);
+
+  g_list_free_full(priv->accounts, matrix_account_destroy);
+
+  G_OBJECT_CLASS(matrix_plugin_parent_class)->finalize(object);
+}
+
+static void
 matrix_plugin_class_init(MatrixPluginClass *klass)
 {
+  G_OBJECT_CLASS(klass)->finalize = matrix_plugin_finalize;
   RTCOM_ACCOUNT_PLUGIN_CLASS(klass)->context_init = matrix_plugin_context_init;
 }
 
