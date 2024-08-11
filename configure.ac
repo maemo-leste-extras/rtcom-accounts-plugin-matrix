@@ -23,7 +23,6 @@ AC_DISABLE_STATIC
 AC_PROG_LIBTOOL
 
 PKG_CHECK_MODULES(ACCOUNTS, rtcom-accounts-widgets libhildonmime)
-PKG_CHECK_MODULES(GLADE, libglade-2.0)
 
 dnl Localization
 GETTEXT_PACKAGE=osso-applet-accounts
