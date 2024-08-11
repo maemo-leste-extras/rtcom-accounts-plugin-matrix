@@ -19,7 +19,6 @@
 
 #include "config.h"
 
-#include <glade/glade.h>
 #include <glib/gi18n-lib.h>
 #include <hildon/hildon.h>
 #include <hildon-uri.h>
