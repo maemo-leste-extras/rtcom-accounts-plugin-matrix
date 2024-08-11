@@ -95,7 +95,7 @@ on_store_settings(RtcomAccountItem *item, GError **error, matrix_account *ma)
     gchar **arr = g_strsplit(g_value_get_string(account), ":", 2);
 
     if (arr[0])
-      rtcom_account_item_store_param_string(item, "user", arr[0]);
+      rtcom_account_item_store_param_string(item, "user", g_value_get_string(account));
 
     if (arr[1])
       rtcom_account_item_store_param_string(item, "server", arr[1]);
