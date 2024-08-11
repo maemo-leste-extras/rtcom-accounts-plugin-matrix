@@ -29,7 +29,7 @@
 #include <librtcom-accounts-widgets/rtcom-login.h>
 #include <librtcom-accounts-widgets/rtcom-param-string.h>
 
-#define USE_SERVER_NAME 1
+#define USE_SERVER_NAME 0
 typedef struct _MatrixPluginClass MatrixPluginClass;
 typedef struct _MatrixPlugin MatrixPlugin;
 
